@@ -1,4 +1,4 @@
-export Output_Manager, Update_Output!, Finalize_Output!
+export Output_Manager, Update_Output!, Update_Output_Init!, Finalize_Output!
 export Lat_Lon_Pcolormesh, Zonal_Mean, Sigma_Zonal_Mean_Pcolormesh, Sigma_Zonal_Mean_Contourf
                              
 mutable struct Output_Manager
@@ -19,29 +19,12 @@ mutable struct Output_Manager
   
     # nλ × nθ × nd × n_day
     # The average is (start, end], namely it does not include the first snapshot.
-    t_daily_mean::Array{Float64, 4}
     u_daily_mean::Array{Float64, 4}
     v_daily_mean::Array{Float64, 4}
     h_daily_mean::Array{Float64, 4}
     
-    # nθ × nd × n_day
-    # The average is (start, end], namely it does not include the first snapshot.
-    t_daily_zonal_mean::Array{Float64, 3}
-    t_eq_daily_zonal_mean::Array{Float64, 3}
-    u_daily_zonal_mean::Array{Float64, 3}
-    v_daily_zonal_mean::Array{Float64, 3}
-    
-    ps_daily_mean::Array{Float64, 3}
-
+    # n_day
     n_daily_mean::Array{Float64, 1}
-    
-
-    # The average from spinup_day+1 to n_day
-    t_zonal_mean::Array{Float64, 2}
-    t_eq_zonal_mean::Array{Float64, 2}
-    u_zonal_mean::Array{Float64, 2}
-    v_zonal_mean::Array{Float64, 2}
-    ps_mean::Array{Float64, 2}
     
 end
 
@@ -60,38 +43,41 @@ function Output_Manager(mesh::Spectral_Spherical_Mesh, vert_coord::Vert_Coordina
     bk = vert_coord.bk
     σc = (bk[2:nd+1] + bk[1:nd])/2.0
     
-    n_day = Int64((end_time - start_time)/day_to_sec)
+    n_day = Int64((end_time - start_time)/day_to_sec) + 1
     
     # nλ × nθ × nd × n_day
     # The average is (start, end], namely it does not include the first snapshot.
-    t_daily_mean = zeros(Float64, nλ, nθ, nd, n_day)
     u_daily_mean = zeros(Float64, nλ, nθ, nd, n_day)
     v_daily_mean = zeros(Float64, nλ, nθ, nd, n_day)
     h_daily_mean = zeros(Float64, nλ, nθ, 1, n_day)
-    
-    # nθ × nd × n_day
-    # The average is (start, end], namely it does not include the first snapshot.
-    t_daily_zonal_mean = zeros(Float64, nθ, nd, n_day)
-    t_eq_daily_zonal_mean = zeros(Float64, nθ, nd, n_day)
-    u_daily_zonal_mean = zeros(Float64, nθ, nd, n_day)
-    v_daily_zonal_mean = zeros(Float64, nθ, nd, n_day)
-    ps_daily_mean = zeros(Float64, nλ, nθ, n_day)
     n_daily_mean = zeros(Float64, n_day)
-
-    # The average from spinup_day+1 to n_day
-    t_zonal_mean = zeros(Float64, nθ, nd)
-    t_eq_zonal_mean = zeros(Float64, nθ, nd)
-    u_zonal_mean = zeros(Float64, nθ, nd)
-    v_zonal_mean = zeros(Float64, nθ, nd)
-    ps_mean = zeros(Float64, nλ, nθ)
-
+    
     Output_Manager(nλ, nθ, nd, n_day,
     day_to_sec, start_time, end_time, current_time, spinup_day,
     λc, θc, σc,
-    t_daily_mean, u_daily_mean, v_daily_mean, h_daily_mean,
-    t_daily_zonal_mean, t_eq_daily_zonal_mean, u_daily_zonal_mean, v_daily_zonal_mean, 
-    ps_daily_mean, n_daily_mean, 
-    t_zonal_mean,t_eq_zonal_mean, u_zonal_mean, v_zonal_mean, ps_mean)
+    u_daily_mean, v_daily_mean, h_daily_mean,
+    n_daily_mean)
+end
+
+function Update_Output_Init!(output_manager::Output_Manager, dyn_data::Dyn_Data, current_time::Int64)
+    @assert(current_time == output_manager.current_time)
+    day_to_sec, start_time, n_day = output_manager.day_to_sec, output_manager.start_time, output_manager.n_day
+
+    u_daily_mean, v_daily_mean, h_daily_mean = output_manager.u_daily_mean, output_manager.v_daily_mean, output_manager.h_daily_mean
+    n_daily_mean = output_manager.n_daily_mean
+
+
+    i_day = 1
+
+    # if(i_day > n_day)
+    #     @info "Warning: i_day > n_day in Output_Manager:Update!"
+    #     return 
+    # end
+    
+    u_daily_mean[:,:,:,i_day] .+= dyn_data.grid_u_c
+    v_daily_mean[:,:,:,i_day] .+= dyn_data.grid_v_c
+    h_daily_mean[:,:,1,i_day] .+= dyn_data.grid_ps_c[:,:,1]
+    n_daily_mean[i_day] += 1
 end
 
 function Update_Output!(output_manager::Output_Manager, dyn_data::Dyn_Data, current_time::Int64)
@@ -99,80 +85,41 @@ function Update_Output!(output_manager::Output_Manager, dyn_data::Dyn_Data, curr
     output_manager.current_time = current_time
     day_to_sec, start_time, n_day = output_manager.day_to_sec, output_manager.start_time, output_manager.n_day
 
-    t_daily_mean, u_daily_mean, v_daily_mean, h_daily_mean = output_manager.t_daily_mean, output_manager.u_daily_mean, output_manager.v_daily_mean, output_manager.h_daily_mean
+    u_daily_mean, v_daily_mean, h_daily_mean = output_manager.u_daily_mean, output_manager.v_daily_mean, output_manager.h_daily_mean
+    n_daily_mean = output_manager.n_daily_mean
+
+
+    i_day = div(current_time - start_time - 1, day_to_sec) + 1 + 1
+
+    # if(i_day > n_day)
+    #     @info "Warning: i_day > n_day in Output_Manager:Update!"
+    #     return 
+    # end
     
-    t_daily_zonal_mean, t_eq_daily_zonal_mean, u_daily_zonal_mean, v_daily_zonal_mean, ps_daily_mean, n_daily_mean = 
-    output_manager.t_daily_zonal_mean, output_manager.t_eq_daily_zonal_mean,
-    output_manager.u_daily_zonal_mean, output_manager.v_daily_zonal_mean, 
-    output_manager.ps_daily_mean, output_manager.n_daily_mean
-
-
-    i_day = div(current_time - start_time - 1, day_to_sec) + 1
-
-    if(i_day > n_day)
-        @info "Warning: i_day > n_day in Output_Manager:Update!"
-        return 
-    end
-    
-    t_daily_mean[:,:,:,i_day] .+= dyn_data.grid_t_c
     u_daily_mean[:,:,:,i_day] .+= dyn_data.grid_u_c
     v_daily_mean[:,:,:,i_day] .+= dyn_data.grid_v_c
     h_daily_mean[:,:,1,i_day] .+= dyn_data.grid_ps_c[:,:,1]
-    
-    t_daily_zonal_mean[:,:,i_day] .+= Zonal_Mean(dyn_data.grid_t_c)
-    t_eq_daily_zonal_mean[:,:,i_day] .+= Zonal_Mean(dyn_data.grid_t_eq)
-    u_daily_zonal_mean[:,:,i_day] .+= Zonal_Mean(dyn_data.grid_u_c)
-    v_daily_zonal_mean[:,:,i_day] .+= Zonal_Mean(dyn_data.grid_v_c)
-
-    ps_daily_mean[:,:,i_day] .+= dyn_data.grid_ps_c[:,:,1]
-
     n_daily_mean[i_day] += 1
 end
 
-function Finalize_Output!(output_manager::Output_Manager, save_file_name::String = "None", mean_save_file_name::String = "None")
+function Finalize_Output!(output_manager::Output_Manager, save_file_name::String = "None")
 
     n_day = output_manager.n_day
 
-    t_daily_mean, u_daily_mean, v_daily_mean, h_daily_mean = output_manager.t_daily_mean, output_manager.u_daily_mean, output_manager.v_daily_mean, output_manager.h_daily_mean
-    
-    t_daily_zonal_mean, t_eq_daily_zonal_mean, u_daily_zonal_mean, v_daily_zonal_mean, ps_daily_mean, n_daily_mean = 
-    output_manager.t_daily_zonal_mean, output_manager.t_eq_daily_zonal_mean,
-    output_manager.u_daily_zonal_mean, output_manager.v_daily_zonal_mean, 
-    output_manager.ps_daily_mean, output_manager.n_daily_mean
+    u_daily_mean, v_daily_mean, h_daily_mean = output_manager.u_daily_mean, output_manager.v_daily_mean, output_manager.h_daily_mean
+    n_daily_mean = output_manager.n_daily_mean
     
     for i_day = 1:n_day
-        
-        t_daily_mean[:,:,:,i_day] ./= n_daily_mean[i_day]
         u_daily_mean[:,:,:,i_day] ./= n_daily_mean[i_day]
         v_daily_mean[:,:,:,i_day] ./= n_daily_mean[i_day]
         h_daily_mean[:,:,1,i_day] ./= n_daily_mean[i_day]
-        
-        t_daily_zonal_mean[:,:,i_day] ./= n_daily_mean[i_day]
-        t_eq_daily_zonal_mean[:,:,i_day] ./= n_daily_mean[i_day]
-        u_daily_zonal_mean[:,:,i_day] ./= n_daily_mean[i_day]
-        v_daily_zonal_mean[:,:,i_day] ./= n_daily_mean[i_day]
-        ps_daily_mean[:,:,i_day] ./= n_daily_mean[i_day]
         n_daily_mean[i_day] = 1.0
     end
-
-    spinup_day = output_manager.spinup_day
-    t_zonal_mean, t_eq_zonal_mean, u_zonal_mean, v_zonal_mean, ps_mean = 
-    output_manager.t_zonal_mean, output_manager.t_eq_zonal_mean, 
-    output_manager.u_zonal_mean, output_manager.v_zonal_mean, output_manager.ps_mean
-
-    t_zonal_mean .= dropdims(mean(t_daily_zonal_mean[:,:,spinup_day+1:n_day], dims=3), dims=3)
-    t_eq_zonal_mean .= dropdims(mean(t_eq_daily_zonal_mean[:,:,spinup_day+1:n_day], dims=3), dims=3)
-    u_zonal_mean .= dropdims(mean(u_daily_zonal_mean[:,:,spinup_day+1:n_day], dims=3), dims=3)
-    v_zonal_mean .= dropdims(mean(v_daily_zonal_mean[:,:,spinup_day+1:n_day], dims=3), dims=3)
-    ps_mean .= dropdims(mean(ps_daily_mean[:,:,spinup_day+1:n_day], dims=3), dims=3)
        
     if save_file_name != "None"
-        @save save_file_name t_daily_mean u_daily_mean v_daily_mean h_daily_mean
+        @save save_file_name u_daily_mean v_daily_mean h_daily_mean
     end
 
-    if mean_save_file_name != "None"
-        @save mean_save_file_name t_zonal_mean u_zonal_mean v_zonal_mean
-    end
 end
 
 

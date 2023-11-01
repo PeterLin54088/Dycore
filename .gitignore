@@ -1,3 +1,6 @@
+# HDF5
+*.jld
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]

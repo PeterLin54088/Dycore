@@ -1,7 +1,7 @@
 export Spectral_Spherical_Mesh, Trans_Spherical_To_Grid!, Trans_Grid_To_Spherical!,
 Trans_Grid_To_Fourier!, Divide_By_Cos!, Multiply_By_Cos!, Vor_Div_From_Grid_UV!, Compute_Alpha_Operator_Init, Compute_Alpha_Operator!, 
 UV_Grid_From_Vor_Div!, Compute_Ucos_Vcos_From_Vor_Div_Init, Compute_Ucos_Vcos_From_Vor_Div!, Compute_Wave_Numbers, Apply_Laplacian_Init, 
-Apply_Laplacian!, Compute_Gradient_Cos_Init, Compute_Gradient_Cos!, Add_Horizontal_Advection!, Compute_Gradients!, Area_Weighted_Global_Mean
+Apply_Laplacian!, Apply_InverseLaplacian!, Compute_Gradient_Cos_Init, Compute_Gradient_Cos!, Add_Horizontal_Advection!, Compute_Gradients!, Area_Weighted_Global_Mean
 
 mutable struct Spectral_Spherical_Mesh
     num_fourier::Int64
@@ -70,6 +70,7 @@ function Spectral_Spherical_Mesh(num_fourier::Int64, num_spherical::Int64, nθ::
     
     
     sinθ, wts = Compute_Gaussian!(nθ)
+    
     qnm, dqnm = Compute_Legendre!(num_fourier, num_spherical, sinθ, nθ)
     
     cosθ = sqrt.(1 .- sinθ.^2)
@@ -77,7 +78,6 @@ function Spectral_Spherical_Mesh(num_fourier::Int64, num_spherical::Int64, nθ::
     
     λc = Array(LinRange(0, 2π, nλ + 1)[1:nλ])
     θc = asin.(sinθ)
-    
     
     Δλ = 2π/nλ 
     λe = (Array(LinRange(-0.5, nλ-0.5, nλ + 1)))*Δλ
@@ -619,7 +619,21 @@ function Compute_Ucos_Vcos_From_Vor_Div!(mesh::Spectral_Spherical_Mesh, vor::Arr
             spherical_u .= eig .* spherical_u
             
         end
-        
+        function Apply_InverseLaplacian!(mesh::Spectral_Spherical_Mesh, spherical_u::Array{ComplexF64,3}) 
+            """
+            [∇^2 u]_{n}^m  = -n(n+1)/r^2 [u]_{n}^m
+            """
+            eig = mesh.laplacian_eig
+            # PyPlot.figure()
+            # PyPlot.contourf(real(spherical_u[:,:,1]), levels = 32, cmap = "bwr")
+            # PyPlot.savefig("spe.png")
+            spherical_u .= spherical_u ./ eig
+            spherical_u[isnan.(spherical_u)] .= 0 
+            # PyPlot.figure()
+            # PyPlot.contourf(real(spherical_u[:,:,1]), levels = 32, cmap = "bwr")
+            # PyPlot.savefig("dif.png")
+            
+        end
         
         
         function Compute_Gradient_Cos_Init(num_fourier::Int64, num_spherical::Int64, 

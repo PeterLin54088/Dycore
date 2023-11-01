@@ -4,25 +4,6 @@ export Shallow_Water_Physics!, Implicit_Correction!, Shallow_Water_Dynamics!
 # we use grid_δlnps, grid_ps spe_lnps as 
 #        grid_δh     grid_h  spe_h
 ##################
-function modified_UV_Grid_From_Vor_Div!(mesh::Spectral_Spherical_Mesh, vor::Array{ComplexF64,3},  div::Array{ComplexF64,3}, grid_u::Array{Float64,3}, grid_v::Array{Float64,3})
-    nd = mesh.nd
-    @assert(size(vor)[3] == nd || size(vor)[3] == 1)
-    if (size(vor)[3] == nd)
-        spherical_ucos, spherical_vcos = mesh.spherical_d1, mesh.spherical_d2  
-    else
-        spherical_ucos, spherical_vcos = mesh.spherical_ds1, mesh.spherical_ds2 
-    end  
-    Compute_Ucos_Vcos_From_Vor_Div!(mesh, vor, div, spherical_ucos, spherical_vcos)
-    
-    Trans_Spherical_To_Grid!(mesh, spherical_ucos, grid_u)
-    Trans_Spherical_To_Grid!(mesh, spherical_vcos, grid_v)
-    
-    cosθ = mesh.cosθ
-    # Divide_By_Cos!(cosθ, grid_u)
-    # Divide_By_Cos!(cosθ, grid_v)
-    
-end
-
 
 function Shallow_Water_Physics!(dyn_data::Dyn_Data, kappa_m::Float64, 
   kappa_t::Float64, h_eq::Array{Float64,3})
@@ -151,7 +132,6 @@ function Shallow_Water_Dynamics!(mesh::Spectral_Spherical_Mesh,
   
   # vorticity
   Vor_Div_From_Grid_UV!(mesh, grid_δu, grid_δv, spe_δvor, spe_δdiv)
-
   
   # divergence
   grid_kin, spe_kin = dyn_data.grid_d_full1, dyn_data.spe_d1
@@ -189,9 +169,7 @@ function Shallow_Water_Dynamics!(mesh::Spectral_Spherical_Mesh,
   Trans_Spherical_To_Grid!(mesh, spe_vor_n, grid_vor)
   Trans_Spherical_To_Grid!(mesh, spe_div_n, grid_div)
   Trans_Spherical_To_Grid!(mesh, spe_h_n, grid_h_n)
-  # UV_Grid_From_Vor_Div!(mesh, spe_vor_n, spe_div_n, grid_u_n, grid_v_n)
-  modified_UV_Grid_From_Vor_Div!(mesh, spe_vor_n, spe_div_n, grid_u_n, grid_v_n)
-  # @show norm(grid_u_n), norm(grid_v_n), norm(grid_h_n)
+  UV_Grid_From_Vor_Div!(mesh, spe_vor_n, spe_div_n, grid_u_n, grid_v_n)
   
   # update data in to the next step
   Time_Advance!(dyn_data)
