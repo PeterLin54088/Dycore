@@ -155,6 +155,13 @@ function Shallow_Water_Main()
     
     MEAN_HEIGHT = 2.0e3 * 9.81 # Geopotential height
     
+    
+    
+    #*** temp
+    Thermal_Wind_from_Height!(mesh, grid_h, grid_u, grid_v)
+    #***
+    
+    
     # Background vort & div (u & v)
     grid_u_b, grid_v_b = zeros(Float64, size(grid_u)), zeros(Float64, size(grid_v))
     grid_vor_b, grid_div_b = zeros(Float64, size(grid_vor)), zeros(Float64, size(grid_div))

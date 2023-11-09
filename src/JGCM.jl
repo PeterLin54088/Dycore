@@ -7,6 +7,7 @@ using FFTW
 using Statistics 
 using JLD2
 using MAT
+using LinearAlgebra
 import PyPlot
 
 include("Atmos_Spectral/Gauss_And_Legendre.jl")
@@ -27,4 +28,8 @@ include("Atmos_Param/HS_Forcing.jl")
 include("Atmos_Spectral/Barotropic_Dynamics.jl")
 include("Atmos_Spectral/Shallow_Water_Dynamics.jl")
 include("Atmos_Spectral/Spectral_Dynamics.jl")
+
+# Personally additional function
+include("Additional_function/Thermal_Wind.jl")
+
 end
