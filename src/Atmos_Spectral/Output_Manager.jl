@@ -22,7 +22,8 @@ mutable struct Output_Manager
     u_daily_mean::Array{Float64, 4}
     v_daily_mean::Array{Float64, 4}
     h_daily_mean::Array{Float64, 4}
-    
+    vor_daily_mean::Array{Float64, 4}
+    div_daily_mean::Array{Float64, 4}
     # n_day
     n_daily_mean::Array{Float64, 1}
     
@@ -50,12 +51,14 @@ function Output_Manager(mesh::Spectral_Spherical_Mesh, vert_coord::Vert_Coordina
     u_daily_mean = zeros(Float64, nλ, nθ, nd, n_day)
     v_daily_mean = zeros(Float64, nλ, nθ, nd, n_day)
     h_daily_mean = zeros(Float64, nλ, nθ, 1, n_day)
+    vor_daily_mean = zeros(Float64, nλ, nθ, nd, n_day)
+    div_daily_mean = zeros(Float64, nλ, nθ, nd, n_day)
     n_daily_mean = zeros(Float64, n_day)
     
     Output_Manager(nλ, nθ, nd, n_day,
     day_to_sec, start_time, end_time, current_time, spinup_day,
     λc, θc, σc,
-    u_daily_mean, v_daily_mean, h_daily_mean,
+    u_daily_mean, v_daily_mean, h_daily_mean, vor_daily_mean, div_daily_mean,
     n_daily_mean)
 end
 
@@ -63,7 +66,7 @@ function Update_Output_Init!(output_manager::Output_Manager, dyn_data::Dyn_Data,
     @assert(current_time == output_manager.current_time)
     day_to_sec, start_time, n_day = output_manager.day_to_sec, output_manager.start_time, output_manager.n_day
 
-    u_daily_mean, v_daily_mean, h_daily_mean = output_manager.u_daily_mean, output_manager.v_daily_mean, output_manager.h_daily_mean
+    u_daily_mean, v_daily_mean, h_daily_mean, vor_daily_mean, div_daily_mean = output_manager.u_daily_mean, output_manager.v_daily_mean, output_manager.h_daily_mean, output_manager.vor_daily_mean, output_manager.div_daily_mean
     n_daily_mean = output_manager.n_daily_mean
 
 
@@ -77,6 +80,8 @@ function Update_Output_Init!(output_manager::Output_Manager, dyn_data::Dyn_Data,
     u_daily_mean[:,:,:,i_day] .+= dyn_data.grid_u_c
     v_daily_mean[:,:,:,i_day] .+= dyn_data.grid_v_c
     h_daily_mean[:,:,1,i_day] .+= dyn_data.grid_ps_c[:,:,1]
+    vor_daily_mean[:,:,:,i_day] .+= dyn_data.grid_vor
+    div_daily_mean[:,:,:,i_day] .+= dyn_data.grid_div
     n_daily_mean[i_day] += 1
 end
 
@@ -85,7 +90,7 @@ function Update_Output!(output_manager::Output_Manager, dyn_data::Dyn_Data, curr
     output_manager.current_time = current_time
     day_to_sec, start_time, n_day = output_manager.day_to_sec, output_manager.start_time, output_manager.n_day
 
-    u_daily_mean, v_daily_mean, h_daily_mean = output_manager.u_daily_mean, output_manager.v_daily_mean, output_manager.h_daily_mean
+   u_daily_mean, v_daily_mean, h_daily_mean, vor_daily_mean, div_daily_mean = output_manager.u_daily_mean, output_manager.v_daily_mean, output_manager.h_daily_mean, output_manager.vor_daily_mean, output_manager.div_daily_mean
     n_daily_mean = output_manager.n_daily_mean
 
 
@@ -99,6 +104,8 @@ function Update_Output!(output_manager::Output_Manager, dyn_data::Dyn_Data, curr
     u_daily_mean[:,:,:,i_day] .+= dyn_data.grid_u_c
     v_daily_mean[:,:,:,i_day] .+= dyn_data.grid_v_c
     h_daily_mean[:,:,1,i_day] .+= dyn_data.grid_ps_c[:,:,1]
+    vor_daily_mean[:,:,:,i_day] .+= dyn_data.grid_vor
+    div_daily_mean[:,:,:,i_day] .+= dyn_data.grid_div
     n_daily_mean[i_day] += 1
 end
 
@@ -106,18 +113,20 @@ function Finalize_Output!(output_manager::Output_Manager, save_file_name::String
 
     n_day = output_manager.n_day
 
-    u_daily_mean, v_daily_mean, h_daily_mean = output_manager.u_daily_mean, output_manager.v_daily_mean, output_manager.h_daily_mean
+    u_daily_mean, v_daily_mean, h_daily_mean, vor_daily_mean, div_daily_mean = output_manager.u_daily_mean, output_manager.v_daily_mean, output_manager.h_daily_mean, output_manager.vor_daily_mean, output_manager.div_daily_mean
     n_daily_mean = output_manager.n_daily_mean
     
     for i_day = 1:n_day
         u_daily_mean[:,:,:,i_day] ./= n_daily_mean[i_day]
         v_daily_mean[:,:,:,i_day] ./= n_daily_mean[i_day]
         h_daily_mean[:,:,1,i_day] ./= n_daily_mean[i_day]
+        vor_daily_mean[:,:,:,i_day] ./= n_daily_mean[i_day]
+        div_daily_mean[:,:,:,i_day] ./= n_daily_mean[i_day]
         n_daily_mean[i_day] = 1.0
     end
        
     if save_file_name != "None"
-        @save save_file_name u_daily_mean v_daily_mean h_daily_mean
+        @save save_file_name u_daily_mean v_daily_mean h_daily_mean vor_daily_mean div_daily_mean
     end
 
 end

@@ -30,7 +30,6 @@ function Filtered_Leapfrog(robert_coef::Float64,
 
     damping = damping_coef*(eigen/eigen[1,num_spherical]).^damping_order
 
-
     laplacian_eigen = eigen
     time = start_time
     Filtered_Leapfrog(robert_coef, damping_order, damping_coef, damping, laplacian_eigen, 

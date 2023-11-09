@@ -388,6 +388,7 @@ function Vor_Div_From_Grid_UV!(mesh::Spectral_Spherical_Mesh, grid_u::Array{Floa
     Compute_Alpha_Operator!(mesh, fourier_ucosθ, fourier_vcosθ,  1.0, div) 
     
     #todo wrong
+    
     vor[:,num_spherical+1,:] .= 0.0
     div[:,num_spherical+1,:] .= 0.0
 end
@@ -628,7 +629,7 @@ function Compute_Ucos_Vcos_From_Vor_Div!(mesh::Spectral_Spherical_Mesh, vor::Arr
             # PyPlot.contourf(real(spherical_u[:,:,1]), levels = 32, cmap = "bwr")
             # PyPlot.savefig("spe.png")
             spherical_u .= spherical_u ./ eig
-            spherical_u[isnan.(spherical_u)] .= 0 
+            spherical_u[isnan.(spherical_u)] .= 0
             # PyPlot.figure()
             # PyPlot.contourf(real(spherical_u[:,:,1]), levels = 32, cmap = "bwr")
             # PyPlot.savefig("dif.png")

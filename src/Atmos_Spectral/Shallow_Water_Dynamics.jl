@@ -6,19 +6,14 @@ export Shallow_Water_Physics!, Implicit_Correction!, Shallow_Water_Dynamics!
 ##################
 
 function Shallow_Water_Physics!(dyn_data::Dyn_Data, kappa_m::Float64, 
-  kappa_t::Float64, h_eq::Array{Float64,3})
-  
-  grid_δu, grid_δv, grid_δh = dyn_data.grid_δu, dyn_data.grid_δv, dyn_data.grid_δlnps
-  grid_u, grid_v, grid_h = dyn_data.grid_u_c, dyn_data.grid_v_c, dyn_data.grid_ps_c
-  # grid_δu .= 0.0
-  # grid_δv .= 0.0
-  # grid_δh .= 0.0
-
-  grid_δu  .= -kappa_m * grid_u
-  grid_δv  .= -kappa_m * grid_v
-  grid_δh .= -kappa_t * (grid_h - h_eq)
-  
-  
+        kappa_t::Float64, h_eq::Array{Float64,3})
+    grid_δu, grid_δv, grid_δh = dyn_data.grid_δu, dyn_data.grid_δv, dyn_data.grid_δlnps
+    grid_u, grid_v, grid_h = dyn_data.grid_u_c, dyn_data.grid_v_c, dyn_data.grid_ps_c
+    
+    grid_δu .= -kappa_m * grid_u
+    grid_δv .= -kappa_m * grid_v
+    grid_δh .= -kappa_t * (grid_h - h_eq)
+    
 end
 
 
@@ -40,10 +35,13 @@ function Implicit_Correction!(integrator::Filtered_Leapfrog,
     Δt = 2.0 * integrator.Δt
   end
 
-  #for the first time step spe_h_c = spe_h_p and spe_div_c = spe_div_p
-  spe_δdiv  .+=  eigen .* (spe_h_c - spe_h_p)
-  spe_δh   .+=  h_0 * (spe_div_c - spe_div_p)
-  
+  if init_step
+    # for the first time step spe_h_c = spe_h_p and spe_div_c = spe_div_p
+  else
+    spe_δdiv  .+=  eigen .* (spe_h_c - spe_h_p)
+    spe_δh   .+=  h_0 * (spe_div_c - spe_div_p)
+  end
+    
   μ = implicit_coef * Δt
   μ2 = μ^2
   
@@ -122,17 +120,15 @@ function Shallow_Water_Dynamics!(mesh::Spectral_Spherical_Mesh,
   grid_v_n = dyn_data.grid_v_n
   grid_v = dyn_data.grid_v_c
   grid_δv = dyn_data.grid_δv
-  
+    
   grid_absvor = dyn_data.grid_absvor
   Compute_Abs_Vor!(grid_vor, atmo_data.coriolis, grid_absvor)
   
   # compute explicit residual
   grid_δu .+=   grid_absvor .* grid_v
   grid_δv .+=  -grid_absvor .* grid_u
-  
   # vorticity
   Vor_Div_From_Grid_UV!(mesh, grid_δu, grid_δv, spe_δvor, spe_δdiv)
-  
   # divergence
   grid_kin, spe_kin = dyn_data.grid_d_full1, dyn_data.spe_d1
   spe_energy = dyn_data.spe_energy
@@ -141,42 +137,31 @@ function Shallow_Water_Dynamics!(mesh::Spectral_Spherical_Mesh,
   spe_energy .= spe_kin + spe_h_c
   Apply_Laplacian!(mesh, spe_energy)
   spe_δdiv .-= spe_energy
-
-  
   # heights
   Add_Horizontal_Advection!(mesh, spe_h_n, grid_u, grid_v, grid_δh)
   grid_δh .-= grid_h .* grid_div
   Trans_Grid_To_Spherical!(mesh, grid_δh, spe_δh)
-
   
   
   Implicit_Correction!(integrator, spe_div_c, spe_div_p, 
   spe_h_c, spe_h_p, h_0,  
   spe_δdiv, spe_δh)
-
-  
   
   Compute_Spectral_Damping!(integrator, spe_vor_c, spe_vor_p, spe_δvor)
   Compute_Spectral_Damping!(integrator, spe_div_c, spe_div_p, spe_δdiv)
   Compute_Spectral_Damping!(integrator, spe_h_c, spe_h_p, spe_δh)
-
+    
   Filtered_Leapfrog!(integrator, spe_δvor, spe_vor_p, spe_vor_c, spe_vor_n)
   Filtered_Leapfrog!(integrator, spe_δdiv, spe_div_p, spe_div_c, spe_div_n)
   Filtered_Leapfrog!(integrator, spe_δh, spe_h_p, spe_h_c, spe_h_n)
-
-  
+    
   # update grid_u, grid_v, grid_vor, grid_div, grid_h
   Trans_Spherical_To_Grid!(mesh, spe_vor_n, grid_vor)
   Trans_Spherical_To_Grid!(mesh, spe_div_n, grid_div)
   Trans_Spherical_To_Grid!(mesh, spe_h_n, grid_h_n)
   UV_Grid_From_Vor_Div!(mesh, spe_vor_n, spe_div_n, grid_u_n, grid_v_n)
-  
+    
   # update data in to the next step
   Time_Advance!(dyn_data)
   
 end
-
-
-
-
-#Shallow_Water_Main()
