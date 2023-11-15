@@ -1,19 +1,30 @@
 #################### >>> Import package >>> ####################
 using JGCM
-using PyPlot
 #################### <<< Import package <<< ####################
 
 
 
-#################### >>> Function overwrite >>> ####################
+#################### >>> Function rewrite >>> ####################
 function modified_UV_Grid_From_Vor_Div!(mesh::Spectral_Spherical_Mesh, vor::Array{ComplexF64,3},  div::Array{ComplexF64,3}, grid_u::Array{Float64,3}, grid_v::Array{Float64,3})
     """
-    Copy from original JGCM, but modified the cosine-weighted part.
+    Reference from https://www.gfdl.noaa.gov/idealized-spectral-models-quickstart/
     
-    The original function assumes that vort and div is cosine-weighted, and 
-    after compute ucos vcos, it'll divide cos.
-    By assigning non-weighted vort and div, and not to divide cosine, the 
-    modified function can output correct result.
+    **********************************************************************************************
+    subroutine_uv_grid_from_vor_div : 
+    Takes as input vorticity and divergence in the spectral domain and returns (u, v) on the grid. 
+    It first computes (cos(θ)u, cos(θ)v), next calculate vor and div in the spectral domain, 
+    then transforms back to the grid and divides by cos(θ). 
+    
+    subroutine_vor_div_from_uv_grid : 
+    Revert process in subroutine_uv_grid_from_vor_div
+    **********************************************************************************************
+    
+    Above are official documentation and instruction about how to implement transformation
+    in UV and Vor&Div, however, the original author does not follow the instruction and only
+    provide uv_grid as the only legal access to the initial field.
+    
+    This self-defined function takes as input vorticity and divergence "without cosine-weighted",
+    and can output correct UV in grid space.
     """
     nd = mesh.nd
     @assert(size(vor)[3] == nd || size(vor)[3] == 1)
@@ -34,7 +45,103 @@ function modified_UV_Grid_From_Vor_Div!(mesh::Spectral_Spherical_Mesh, vor::Arra
     # Divide_By_Cos!(cosθ, grid_v)
     
 end
-#################### <<< Function overwrite <<< ####################
+
+function Background_Vorticity_Strip!(mesh::Spectral_Spherical_Mesh, 
+                                     atmo_data::Atmo_Data,
+                                     grid_u::Array{Float64,3}, grid_v::Array{Float64,3}, 
+                                     spe_vor_b::Array{ComplexF64,3}, spe_div_b::Array{ComplexF64,3},
+                                     spe_h_b::Array{ComplexF64,3},
+                                     vor_pert::Float64, vor_latitude::Float64, vor_width::Float64,
+                                     Mean_Height::Float64)
+    grid_u_b, grid_v_b = zeros(Float64, size(grid_u)), zeros(Float64, size(grid_v)) 
+    nλ, nθ, nd = mesh.nλ, mesh.nθ, mesh.nd
+    θc, λc = mesh.θc, mesh.λc
+    deg_to_rad = pi/180
+    
+        # Vorticity strip
+    lons = reshape(ones(nθ)' .* λc, (nλ,nθ,nd))
+    lats = reshape(θc' .* ones(nλ), (nλ,nθ,nd))
+    grid_vor_b = vor_pert * exp.(-((lats .- vor_latitude*deg_to_rad)/(vor_width*deg_to_rad)).^2)
+    grid_div_b = 0.0 .* lons
+    
+        # Cosine-weighting removal
+    Trans_Grid_To_Spherical!(mesh, grid_vor_b, spe_vor_b)
+    Trans_Grid_To_Spherical!(mesh, grid_div_b, spe_div_b)
+    modified_UV_Grid_From_Vor_Div!(mesh, spe_vor_b, spe_div_b, grid_u_b, grid_v_b)
+    
+        # Avoid gibbs phenomenon
+    grid_u_b .= grid_u_b .* exp.(-((lats .- vor_latitude*deg_to_rad)/(10*vor_width*deg_to_rad)).^2)
+    Vor_Div_From_Grid_UV!(mesh, grid_u_b, grid_v_b, spe_vor_b, spe_div_b)
+    
+    Trans_Spherical_To_Grid!(mesh, spe_vor_b,  grid_vor_b)
+    Trans_Spherical_To_Grid!(mesh, spe_div_b,  grid_div_b)
+    
+    # Background balanced height
+    # grid_h_b, spe_h_b = zeros(Float64, size(grid_h)), zeros(ComplexF64, size(spe_h_c)) 
+    grid_absvor = zeros(Float64, size(grid_vor_b))
+    spe_δvor = zeros(ComplexF64, size(spe_vor_b))
+    spe_δdiv = zeros(ComplexF64, size(spe_div_b))
+    spe_kin = zeros(ComplexF64, size(spe_vor_b))
+        # Absolute vorticity advection
+    Compute_Abs_Vor!(grid_vor_b, atmo_data.coriolis, grid_absvor)
+    grid_δu =  grid_absvor .* grid_v_b
+    grid_δv = -grid_absvor .* grid_u_b
+    Vor_Div_From_Grid_UV!(mesh, grid_δu, grid_δv, spe_δvor, spe_δdiv)
+        # Kinetic energy
+    Apply_InverseLaplacian!(mesh, spe_δdiv)
+    grid_kin = 0.5 * (grid_u_b.^2 + grid_v_b.^2)
+    Trans_Grid_To_Spherical!(mesh, grid_kin, spe_kin)
+        # Potential energy
+    spe_h_b .= spe_δdiv - spe_kin
+    println("background geopotential anomaly adjustment : ", spe_h_b[1,1])
+    spe_h_b[1,1] = Mean_Height
+end
+
+function Perturbed_Vorticity_Blobs!(mesh::Spectral_Spherical_Mesh,
+                                    atmo_data::Atmo_Data,
+                                    grid_u::Array{Float64,3}, grid_v::Array{Float64,3}, 
+                                    spe_vor_p::Array{ComplexF64,3}, spe_div_p::Array{ComplexF64,3},
+                                    spe_h_p::Array{ComplexF64,3},
+                                    vor_pert::Float64, vor_latitude::Float64, vor_width::Float64,
+                                    Mean_Height::Float64)
+    grid_u_p, grid_v_p = zeros(Float64, size(grid_u)), zeros(Float64, size(grid_v)) 
+    nλ, nθ, nd = mesh.nλ, mesh.nθ, mesh.nd
+    θc, λc = mesh.θc, mesh.λc
+    deg_to_rad = pi/180
+    
+        # Vorticity blobs
+    lons = reshape(ones(nθ)' .* λc, (nλ,nθ,nd))
+    lats = reshape(θc' .* ones(nλ), (nλ,nθ,nd))
+    grid_vor_p = vor_pert * sin.(15*lons) .* exp.(-((lats .- vor_latitude*deg_to_rad)/(vor_width*deg_to_rad)).^2)
+    grid_div_p = 0.0 .* lons
+    
+        # Cosine-weighting removal
+    Trans_Grid_To_Spherical!(mesh, grid_vor_p, spe_vor_p)
+    Trans_Grid_To_Spherical!(mesh, grid_div_p, spe_div_p)
+    modified_UV_Grid_From_Vor_Div!(mesh, spe_vor_p, spe_div_p, grid_u_p, grid_v_p)
+    Vor_Div_From_Grid_UV!(mesh, grid_u_p, grid_v_p, spe_vor_p, spe_div_p)
+    
+    # Background balanced height
+    # grid_h_b, spe_h_b = zeros(Float64, size(grid_h)), zeros(ComplexF64, size(spe_h_c)) 
+    grid_absvor = zeros(Float64, size(grid_vor_p))
+    spe_δvor = zeros(ComplexF64, size(spe_vor_p))
+    spe_δdiv = zeros(ComplexF64, size(spe_div_p))
+    spe_kin = zeros(ComplexF64, size(spe_vor_p))
+        # Absolute vorticity advection
+    Compute_Abs_Vor!(grid_vor_p, atmo_data.coriolis, grid_absvor)
+    grid_δu =  grid_absvor .* grid_v_p
+    grid_δv = -grid_absvor .* grid_u_p
+    Vor_Div_From_Grid_UV!(mesh, grid_δu, grid_δv, spe_δvor, spe_δdiv)
+        # Kinetic energy
+    Apply_InverseLaplacian!(mesh, spe_δdiv)
+    grid_kin = 0.5 * (grid_u_p.^2 + grid_v_p.^2)
+    Trans_Grid_To_Spherical!(mesh, grid_kin, spe_kin)
+        # Potential energy
+    spe_h_p .= spe_δdiv - spe_kin
+    println("perturbed geopotential anomaly adjustment : ", spe_h_p[1,1])
+    spe_h_p[1,1] = Mean_Height
+end
+#################### <<< Function rewrite <<< ####################
 
 
 
@@ -43,9 +150,6 @@ function Shallow_Water_Main()
     """
     """
     day_to_sec = 86400
-    
-    
-    
     #################### >>> Model initialization >>> ####################
     """
     Construct necessary objects to instantiate model
@@ -56,7 +160,7 @@ function Shallow_Water_Main()
     5. op_man      <-   Output_Manager
     """
     model_name = "Shallow_Water"
-    nλ, nθ, nd = 128, 64, 1
+    nλ, nθ, nd = 256, 128, 1
     num_fourier = floor(Int64, nθ*(2/3))
     num_spherical = num_fourier + 1
     radius = 6371.0e3
@@ -83,61 +187,41 @@ function Shallow_Water_Main()
                         num_fourier, num_spherical,
                         nλ, nθ, nd)
     # Initialize integrator
+        # Hyper-viscosity parameter
+    damping_order = 8
+    damping_coef = 1.0e-5
         # Robert-Asselin filter parameter
-    damping_order = 10
-    damping_coef = 1.0e-10
     robert_coef  = 0.04
         # Leapfrog parameter
     init_step = true
-    implicit_coef = 0.5
+    implicit_coef = 0.5 # centered
         # Spinup period (day)
     spinup_day = 1
         # Time
     start_time = 0
-    end_time = 30*day_to_sec
-    Δt = 600
-    NT =  Int64(end_time / Δt)
+    end_time = 10*day_to_sec
+    Δt = 3600
+    NT = Int64(end_time / Δt)
     
-    integrator = Filtered_Leapfrog(robert_coef, damping_order, damping_coef, mesh.laplacian_eig,
-                                   implicit_coef, Δt, init_step, start_time, end_time)
+    integrator = Filtered_Leapfrog(robert_coef, 
+                                   damping_order, damping_coef, 
+                                   mesh.laplacian_eig, implicit_coef, 
+                                   Δt, init_step, start_time, end_time)
     # Data Visualization
     op_man = Output_Manager(mesh, 
                             vert_coord, 
-                            start_time, end_time, 
-                            spinup_day)
+                            start_time, end_time, spinup_day)
     #################### <<< Model initialization <<< ####################
     
     
     
     #################### >>> Field initialization >>> ####################
     """
-    Some facts should know before modify this block
-    1.The governing equations are
-      ∂vor/∂t = ∇ ((f + vor) V)  := δvor
-      ∂div/∂t = ∇ × ((f + vor) V) - ∇^2(E + H) := δdiv
-      ∂H/∂t = -H div - ∇H V  := δH
-    2.Method {Vor_Div_From_Grid_UV!} and {UV_Grid_From_Vor_Div!} are truncated,
-      which produces gibbs phenomenon in fixed boundary
-    ***background vorticity and divergence***
-    By default, the vorticity and divergence in spectral space are cosine-weighted,
-    and if we need to assign vorticity and divergence in grid space, we have to 
-    manually weight them.
-    An alternative method is that, calculate non-weighted vorticity and divergence,
-    but add cosine-weight in our overwrited transfer function
-    1. assign not-weighting vorticity and divergence 
-    2. calculate not-weighting u and v wind
-    3. re-weighting by self-defined function
-    4. calculate vorticity and divergence in spherical coordinate
-    
-    ***background balanced height***
-    In original SWE, the coriolis and pressure should reach equilibrium, and in this
-    model, this relation is presented within divergence equation, describe as
-    geopotential = invlap(absolute vorticity advection) - kinetic energy 
-    ***perturbed vorticity and divergence***
-    
-    ***perturbed height***
-    
-    ***perturbed balanced wind***
+    The governing equations are
+        ∂vor/∂t = ∇ ((f + vor) V)  := δvor
+        ∂div/∂t = ∇ × ((f + vor) V) - ∇^2(E + H) := δdiv
+        ∂H/∂t = -H div - ∇H V  := δH
+    Gibbs phenomenon can occur when signals near fixed boundary (ex. poles) are not zeros
     """
     grid_u, grid_v = dyn_data.grid_u_c, dyn_data.grid_v_c
     grid_vor, grid_div = dyn_data.grid_vor, dyn_data.grid_div
@@ -153,96 +237,60 @@ function Shallow_Water_Main()
     spe_δvor = dyn_data.spe_δvor
     spe_δdiv = dyn_data.spe_δdiv
     
-    MEAN_HEIGHT = 2.0e3 * 9.81 # Geopotential height
+    MEAN_HEIGHT = 1.0e3 * 9.81 # Geopotential height
     
-    
-    
-    #*** temp
-    Thermal_Wind_from_Height!(mesh, grid_h, grid_u, grid_v)
-    #***
-    
-    
-    # Background vort & div (u & v)
+    # Background vorticity and divergence
     grid_u_b, grid_v_b = zeros(Float64, size(grid_u)), zeros(Float64, size(grid_v))
     grid_vor_b, grid_div_b = zeros(Float64, size(grid_vor)), zeros(Float64, size(grid_div))
     spe_vor_b, spe_div_b = zeros(ComplexF64, size(spe_vor_c)), zeros(ComplexF64, size(spe_div_c))
-        # Vorticity strip
-    xx = reshape(ones(nθ)' .* λc, (nλ,nθ,nd))
-    yy = reshape(θc' .* ones(nλ), (nλ,nθ,nd))
-    grid_vor_b .= 4e-5 * exp.(-(((yy .- 19*pi/180)/(3*pi/180)).^2))
-    grid_div_b .= 0
-        # Cosine-weighting removal
-    Trans_Grid_To_Spherical!(mesh, grid_vor_b, spe_vor_b)
-    Trans_Grid_To_Spherical!(mesh, grid_div_b, spe_div_b)
-    modified_UV_Grid_From_Vor_Div!(mesh, spe_vor_b, spe_div_b, grid_u_b, grid_v_b)
-        # Smoothen signal at boundary
-    grid_u_b .= grid_u_b .* exp.(-(((yy .- 19*pi/180)/(40*pi/180)).^2))
-    Vor_Div_From_Grid_UV!(mesh, grid_u_b, grid_v_b, spe_vor_b, spe_div_b)
+    # Background balanced height
+    grid_h_b, spe_h_b = zeros(Float64, size(grid_h)), zeros(ComplexF64, size(spe_h_c))
+                
+    vor_pert = 5.37e-5
+    vor_latitude = 19.0
+    vor_width = 3.0
+    Background_Vorticity_Strip!(mesh, 
+                                atmo_data,
+                                grid_u, grid_v,
+                                spe_vor_b, spe_div_b,
+                                spe_h_b,
+                                vor_pert, vor_latitude, vor_width,
+                                MEAN_HEIGHT)
+                   
+    
+                
     UV_Grid_From_Vor_Div!(mesh, spe_vor_b, spe_div_b, grid_u_b, grid_v_b)
     Trans_Spherical_To_Grid!(mesh, spe_vor_b,  grid_vor_b)
     Trans_Spherical_To_Grid!(mesh, spe_div_b,  grid_div_b)
-    
-    UV_Grid_From_Vor_Div!(mesh, spe_vor_b, spe_div_b, grid_u_b, grid_v_b)
-    
-    println("background vorticity amplitude : ", maximum(grid_vor_b))
-    # Background balanced height
-    grid_h_b, spe_h_b = zeros(Float64, size(grid_h)), zeros(ComplexF64, size(spe_h_c))  
-        # Absolute vorticity advection
-    Compute_Abs_Vor!(grid_vor_b, atmo_data.coriolis, grid_absvor)
-    grid_δu .=   grid_absvor .* grid_v_b
-    grid_δv .=  -grid_absvor .* grid_u_b
-    Vor_Div_From_Grid_UV!(mesh, grid_δu, grid_δv, spe_δvor, spe_δdiv)
-        # Kinetic energy
-    Apply_InverseLaplacian!(mesh, spe_δdiv)
-    grid_kin .= 0.5 * (grid_u_b.^2 + grid_v_b.^2)
-    Trans_Grid_To_Spherical!(mesh, grid_kin, spe_kin)
-        # Potential energy
-    spe_h_b .= spe_δdiv - spe_kin
-    println("background geopotential anomaly adjustment : ", spe_h_b[1,1])
-    spe_h_b[1,1] = MEAN_HEIGHT # set mean height
     Trans_Spherical_To_Grid!(mesh, spe_h_b,  grid_h_b)
+    println("background vorticity amplitude : ", maximum(grid_vor_b))
     
     # Perturbed vort & div (u & v)
     grid_u_p, grid_v_p = zeros(Float64, size(grid_u)), zeros(Float64, size(grid_v))
     grid_vor_p, grid_div_p = zeros(Float64, size(grid_vor)), zeros(Float64, size(grid_div))
     spe_vor_p, spe_div_p = zeros(ComplexF64, size(spe_vor_c)), zeros(ComplexF64, size(spe_div_c))
-        # Vorticity blob
-    xx = reshape(ones(nθ)' .* λc, (nλ,nθ,nd))
-    yy = reshape(θc' .* ones(nλ), (nλ,nθ,nd))
-    grid_vor_p .= 3e-6 * sin.(15*xx) .* exp.(-(((yy .- 20*pi/180)/(5*pi/180)).^2))
-    grid_div_p .= 0
-        # Cosine-weighting removal
-    Trans_Grid_To_Spherical!(mesh, grid_vor_p, spe_vor_p)
-    Trans_Grid_To_Spherical!(mesh, grid_div_p, spe_div_p)
-    modified_UV_Grid_From_Vor_Div!(mesh, spe_vor_p, spe_div_p, grid_u_p, grid_v_p)
-    Vor_Div_From_Grid_UV!(mesh, grid_u_p, grid_v_p, spe_vor_p, spe_div_p)
+    grid_h_p, spe_h_p = zeros(Float64, size(grid_h)), zeros(ComplexF64, size(spe_h_c))
+    
+    vor_pert = 1e-7
+    vor_latitude = 20.0
+    vor_width = 5.0
+    Perturbed_Vorticity_Blobs!(mesh, 
+                               atmo_data,
+                               grid_u, grid_v,
+                               spe_vor_p, spe_div_p,
+                               spe_h_p,
+                               vor_pert, vor_latitude, vor_width,
+                               0.0)
+    UV_Grid_From_Vor_Div!(mesh, spe_vor_p, spe_div_p, grid_u_p, grid_v_p)
     Trans_Spherical_To_Grid!(mesh, spe_vor_p,  grid_vor_p)
     Trans_Spherical_To_Grid!(mesh, spe_div_p,  grid_div_p)
-
-    # PyPlot.figure(figsize = (16,9), dpi = 160)
-    # PyPlot.contourf(grid_vor_p[:,:,1]', levels = 32, extend = "both", cmap = "bwr")
-    # PyPlot.savefig("u.png")
-    
-    # Perturbed balanced height
-    grid_h_p, spe_h_p = zeros(Float64, size(grid_h)), zeros(ComplexF64, size(spe_h_c))
-        # Absolute vorticity advection
-    Compute_Abs_Vor!(grid_vor_p, atmo_data.coriolis, grid_absvor)
-    grid_δu .=   grid_absvor .* grid_v_p
-    grid_δv .=  -grid_absvor .* grid_u_p
-    Vor_Div_From_Grid_UV!(mesh, grid_δu, grid_δv, spe_δvor, spe_δdiv)
-        # Kinetic energy
-    Apply_InverseLaplacian!(mesh, spe_δdiv)
-    grid_kin .= 0.5 * (grid_u_p.^2 + grid_v_p.^2)
-    Trans_Grid_To_Spherical!(mesh, grid_kin, spe_kin)
-        # Potential energy
-    spe_h_p .= spe_δdiv - spe_kin
-    println("perturbed geopotential distance is : ",spe_h_p[1,1])
-    spe_h_p[1,1] = 0 # perturbed must be zero-mean
     Trans_Spherical_To_Grid!(mesh, spe_h_p,  grid_h_p)
+    println("perturbed vorticity amplitude : ", maximum(grid_vor_p))
     
     # Reference height
     h_eq = zeros(Float64, nλ, nθ, 1)
     h_eq .= MEAN_HEIGHT
+    
     # Complete field
     grid_u .= grid_u_b + grid_u_p
     grid_v .= grid_v_b + grid_v_p
@@ -252,15 +300,6 @@ function Shallow_Water_Main()
     spe_vor_c .= spe_vor_b + spe_vor_p
     spe_div_c .= spe_div_b + spe_div_p
     spe_h_c .= spe_h_b + spe_h_p
-    
-    # grid_u .= grid_u_b
-    # grid_v .= grid_v_b
-    # grid_vor .= grid_vor_b
-    # grid_div .= grid_div_b
-    # grid_h .= grid_h_b
-    # spe_vor_c .= spe_vor_b
-    # spe_div_c .= spe_div_b
-    # spe_h_c .= spe_h_b
     # Output initial field
     Update_Output_Init!(op_man, dyn_data, integrator.time)
     #################### <<< Field initialization <<< ####################
@@ -269,31 +308,27 @@ function Shallow_Water_Main()
     
     #################### >>> Parameter initialization >>> ####################
     # Linear damping
-    fric_damp_time  = 1e5 * day_to_sec
-    therm_damp_time = 1e5 * day_to_sec
-    kappa_m = 1.0 / fric_damp_time
-    kappa_t = 1.0 / therm_damp_time
+    # Following Suhas & Boos, the physical damping is not included
+    
+    # fric_damp_time  = 20.0 * day_to_sec
+    # therm_damp_time = 10.0 * day_to_sec
+    kappa_m = 0.0
+    kappa_t = 0.0
     #################### <<< Parameter initialization <<< ####################
     
     
     
     #################### >>> Simulation process >>> ####################
     Shallow_Water_Physics!(dyn_data, kappa_m, kappa_t, h_eq)
-    Shallow_Water_Dynamics!(mesh, atmo_data, MEAN_HEIGHT, dyn_data, integrator)
+    Shallow_Water_Dynamics!(mesh, atmo_data, dyn_data, integrator, MEAN_HEIGHT)
     Update_Init_Step!(integrator)
     integrator.time += Δt
     Update_Output!(op_man, dyn_data, integrator.time)
     for i = 2:NT
         Shallow_Water_Physics!(dyn_data, kappa_m, kappa_t, h_eq)
-        Shallow_Water_Dynamics!(mesh, atmo_data, MEAN_HEIGHT, dyn_data, integrator)
+        Shallow_Water_Dynamics!(mesh, atmo_data, dyn_data, integrator, MEAN_HEIGHT)
         integrator.time += Δt 
         Update_Output!(op_man, dyn_data, integrator.time)
-        # PyPlot.figure(figsize = (16,9), dpi = 160)
-        # PyPlot.contourf(grid_u[:,:,1]', levels = LinRange(-10,10,21), extend = "both", cmap = "bwr")
-        # PyPlot.savefig("u_$i")
-        # PyPlot.figure(figsize = (16,9), dpi = 160)
-        # PyPlot.contourf(grid_vor[:,:,1]', levels = LinRange(-4e-5,4e-5,21), extend = "both", cmap = "bwr")
-        # PyPlot.savefig("vor_$i")
         if (integrator.time%day_to_sec == 0)
             @info (÷(integrator.time, day_to_sec))
         end

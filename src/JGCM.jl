@@ -7,7 +7,6 @@ using FFTW
 using Statistics 
 using JLD2
 using MAT
-using LinearAlgebra
 import PyPlot
 
 include("Atmos_Spectral/Gauss_And_Legendre.jl")
