@@ -53,31 +53,34 @@ function Background_Vorticity_Strip!(mesh::Spectral_Spherical_Mesh,
                                      spe_h_b::Array{ComplexF64,3},
                                      vor_pert::Float64, vor_latitude::Float64, vor_width::Float64,
                                      Mean_Height::Float64)
-    grid_u_b, grid_v_b = zeros(Float64, size(grid_u)), zeros(Float64, size(grid_v)) 
+    """
+    Generate a vorticity strip following Suhas & Boos
+    Also, generate the corresponding balanced height via geostrophic balance(?)
+    """
     nλ, nθ, nd = mesh.nλ, mesh.nθ, mesh.nd
     θc, λc = mesh.θc, mesh.λc
     deg_to_rad = pi/180
     
-        # Vorticity strip
+    # Vorticity strip
+        # Assign vor and div
+    grid_u_b, grid_v_b = zeros(Float64, size(grid_u)), zeros(Float64, size(grid_v)) 
     lons = reshape(ones(nθ)' .* λc, (nλ,nθ,nd))
     lats = reshape(θc' .* ones(nλ), (nλ,nθ,nd))
     grid_vor_b = vor_pert * exp.(-((lats .- vor_latitude*deg_to_rad)/(vor_width*deg_to_rad)).^2)
     grid_div_b = 0.0 .* lons
-    
+        # Corresponding wind field
         # Cosine-weighting removal
     Trans_Grid_To_Spherical!(mesh, grid_vor_b, spe_vor_b)
     Trans_Grid_To_Spherical!(mesh, grid_div_b, spe_div_b)
     modified_UV_Grid_From_Vor_Div!(mesh, spe_vor_b, spe_div_b, grid_u_b, grid_v_b)
-    
-        # Avoid gibbs phenomenon
+        # Avoid gibbs phenomenon (associated Legendre polynomials)
     grid_u_b .= grid_u_b .* exp.(-((lats .- vor_latitude*deg_to_rad)/(10*vor_width*deg_to_rad)).^2)
     Vor_Div_From_Grid_UV!(mesh, grid_u_b, grid_v_b, spe_vor_b, spe_div_b)
-    
     Trans_Spherical_To_Grid!(mesh, spe_vor_b,  grid_vor_b)
     Trans_Spherical_To_Grid!(mesh, spe_div_b,  grid_div_b)
     
     # Background balanced height
-    # grid_h_b, spe_h_b = zeros(Float64, size(grid_h)), zeros(ComplexF64, size(spe_h_c)) 
+        # Temporary variable
     grid_absvor = zeros(Float64, size(grid_vor_b))
     spe_δvor = zeros(ComplexF64, size(spe_vor_b))
     spe_δdiv = zeros(ComplexF64, size(spe_div_b))
@@ -93,7 +96,6 @@ function Background_Vorticity_Strip!(mesh::Spectral_Spherical_Mesh,
     Trans_Grid_To_Spherical!(mesh, grid_kin, spe_kin)
         # Potential energy
     spe_h_b .= spe_δdiv - spe_kin
-    println("background geopotential anomaly adjustment : ", spe_h_b[1,1])
     spe_h_b[1,1] = Mean_Height
 end
 
@@ -104,17 +106,23 @@ function Perturbed_Vorticity_Blobs!(mesh::Spectral_Spherical_Mesh,
                                     spe_h_p::Array{ComplexF64,3},
                                     vor_pert::Float64, vor_latitude::Float64, vor_width::Float64,
                                     Mean_Height::Float64)
-    grid_u_p, grid_v_p = zeros(Float64, size(grid_u)), zeros(Float64, size(grid_v)) 
+    """
+    Generate small-amplitude sinusoidal vorticity anomalies following Suhas & Boos
+    Also, generate the corresponding balanced height via geostrophic balance(?)
+    """
+     
     nλ, nθ, nd = mesh.nλ, mesh.nθ, mesh.nd
     θc, λc = mesh.θc, mesh.λc
     deg_to_rad = pi/180
     
-        # Vorticity blobs
+    # Vorticity blobs
+        # Assign vor and div
+    grid_u_p, grid_v_p = zeros(Float64, size(grid_u)), zeros(Float64, size(grid_v))
     lons = reshape(ones(nθ)' .* λc, (nλ,nθ,nd))
     lats = reshape(θc' .* ones(nλ), (nλ,nθ,nd))
     grid_vor_p = vor_pert * sin.(15*lons) .* exp.(-((lats .- vor_latitude*deg_to_rad)/(vor_width*deg_to_rad)).^2)
     grid_div_p = 0.0 .* lons
-    
+        # Corresponding wind field
         # Cosine-weighting removal
     Trans_Grid_To_Spherical!(mesh, grid_vor_p, spe_vor_p)
     Trans_Grid_To_Spherical!(mesh, grid_div_p, spe_div_p)
@@ -122,7 +130,7 @@ function Perturbed_Vorticity_Blobs!(mesh::Spectral_Spherical_Mesh,
     Vor_Div_From_Grid_UV!(mesh, grid_u_p, grid_v_p, spe_vor_p, spe_div_p)
     
     # Background balanced height
-    # grid_h_b, spe_h_b = zeros(Float64, size(grid_h)), zeros(ComplexF64, size(spe_h_c)) 
+        # Temporary variable
     grid_absvor = zeros(Float64, size(grid_vor_p))
     spe_δvor = zeros(ComplexF64, size(spe_vor_p))
     spe_δdiv = zeros(ComplexF64, size(spe_div_p))
@@ -138,7 +146,6 @@ function Perturbed_Vorticity_Blobs!(mesh::Spectral_Spherical_Mesh,
     Trans_Grid_To_Spherical!(mesh, grid_kin, spe_kin)
         # Potential energy
     spe_h_p .= spe_δdiv - spe_kin
-    println("perturbed geopotential anomaly adjustment : ", spe_h_p[1,1])
     spe_h_p[1,1] = Mean_Height
 end
 #################### <<< Function rewrite <<< ####################
@@ -200,7 +207,7 @@ function Shallow_Water_Main()
         # Time
     start_time = 0
     end_time = 10*day_to_sec
-    Δt = 3600
+    Δt = 3600 # CFL condition needed
     NT = Int64(end_time / Δt)
     
     integrator = Filtered_Leapfrog(robert_coef, 
@@ -224,31 +231,21 @@ function Shallow_Water_Main()
     Gibbs phenomenon can occur when signals near fixed boundary (ex. poles) are not zeros
     """
     grid_u, grid_v = dyn_data.grid_u_c, dyn_data.grid_v_c
-    grid_vor, grid_div = dyn_data.grid_vor, dyn_data.grid_div
-    spe_vor_c, spe_div_c = dyn_data.spe_vor_c, dyn_data.spe_div_c
+    grid_vor, spe_vor_c = dyn_data.grid_vor, dyn_data.spe_vor_c
+    grid_div, spe_div_c = dyn_data.grid_div, dyn_data.spe_div_c
     grid_h, spe_h_c = dyn_data.grid_ps_c, dyn_data.spe_lnps_c
     
-    grid_absvor = dyn_data.grid_absvor
-    grid_kin, spe_kin = dyn_data.grid_d_full1, dyn_data.spe_d1
-    spe_energy = dyn_data.spe_energy
-    
-    grid_δu = dyn_data.grid_δu
-    grid_δv = dyn_data.grid_δv
-    spe_δvor = dyn_data.spe_δvor
-    spe_δdiv = dyn_data.spe_δdiv
-    
-    MEAN_HEIGHT = 1.0e3 * 9.81 # Geopotential height
-    
-    # Background vorticity and divergence
-    grid_u_b, grid_v_b = zeros(Float64, size(grid_u)), zeros(Float64, size(grid_v))
-    grid_vor_b, grid_div_b = zeros(Float64, size(grid_vor)), zeros(Float64, size(grid_div))
+    # Background field
     spe_vor_b, spe_div_b = zeros(ComplexF64, size(spe_vor_c)), zeros(ComplexF64, size(spe_div_c))
-    # Background balanced height
-    grid_h_b, spe_h_b = zeros(Float64, size(grid_h)), zeros(ComplexF64, size(spe_h_c))
-                
+    spe_h_b = zeros(ComplexF64, size(spe_h_c))
+    
+    #-------------------------------------------------------------------------------------#
     vor_pert = 5.37e-5
     vor_latitude = 19.0
     vor_width = 3.0
+    MEAN_HEIGHT = 1.0e3 * 9.81
+    #-------------------------------------------------------------------------------------#
+    
     Background_Vorticity_Strip!(mesh, 
                                 atmo_data,
                                 grid_u, grid_v,
@@ -256,50 +253,45 @@ function Shallow_Water_Main()
                                 spe_h_b,
                                 vor_pert, vor_latitude, vor_width,
                                 MEAN_HEIGHT)
-                   
-    
-                
-    UV_Grid_From_Vor_Div!(mesh, spe_vor_b, spe_div_b, grid_u_b, grid_v_b)
-    Trans_Spherical_To_Grid!(mesh, spe_vor_b,  grid_vor_b)
-    Trans_Spherical_To_Grid!(mesh, spe_div_b,  grid_div_b)
-    Trans_Spherical_To_Grid!(mesh, spe_h_b,  grid_h_b)
-    println("background vorticity amplitude : ", maximum(grid_vor_b))
     
     # Perturbed vort & div (u & v)
-    grid_u_p, grid_v_p = zeros(Float64, size(grid_u)), zeros(Float64, size(grid_v))
-    grid_vor_p, grid_div_p = zeros(Float64, size(grid_vor)), zeros(Float64, size(grid_div))
     spe_vor_p, spe_div_p = zeros(ComplexF64, size(spe_vor_c)), zeros(ComplexF64, size(spe_div_c))
-    grid_h_p, spe_h_p = zeros(Float64, size(grid_h)), zeros(ComplexF64, size(spe_h_c))
+    spe_h_p = zeros(ComplexF64, size(spe_h_c))
     
+    #-------------------------------------------------------------------------------------#
     vor_pert = 1e-7
     vor_latitude = 20.0
     vor_width = 5.0
+    ANOMALY_HEIGHT = 0.0e3 * 9.81
+    #-------------------------------------------------------------------------------------#
+    
     Perturbed_Vorticity_Blobs!(mesh, 
                                atmo_data,
                                grid_u, grid_v,
                                spe_vor_p, spe_div_p,
                                spe_h_p,
                                vor_pert, vor_latitude, vor_width,
-                               0.0)
-    UV_Grid_From_Vor_Div!(mesh, spe_vor_p, spe_div_p, grid_u_p, grid_v_p)
-    Trans_Spherical_To_Grid!(mesh, spe_vor_p,  grid_vor_p)
-    Trans_Spherical_To_Grid!(mesh, spe_div_p,  grid_div_p)
-    Trans_Spherical_To_Grid!(mesh, spe_h_p,  grid_h_p)
-    println("perturbed vorticity amplitude : ", maximum(grid_vor_p))
-    
+                               ANOMALY_HEIGHT)
+   
     # Reference height
     h_eq = zeros(Float64, nλ, nθ, 1)
     h_eq .= MEAN_HEIGHT
     
     # Complete field
-    grid_u .= grid_u_b + grid_u_p
-    grid_v .= grid_v_b + grid_v_p
-    grid_vor .= grid_vor_b + grid_vor_p
-    grid_div .= grid_div_b + grid_div_p
-    grid_h .= grid_h_b + grid_h_p
     spe_vor_c .= spe_vor_b + spe_vor_p
     spe_div_c .= spe_div_b + spe_div_p
     spe_h_c .= spe_h_b + spe_h_p
+    
+    Trans_Spherical_To_Grid!(mesh, spe_vor_c, grid_vor)
+    Trans_Spherical_To_Grid!(mesh, spe_div_c, grid_div)
+    Trans_Spherical_To_Grid!(mesh, spe_h_c, grid_h)
+    UV_Grid_From_Vor_Div!(mesh, spe_vor_c, spe_div_c, grid_u, grid_v)
+    
+    println(repeat("###", 30))
+    println("Initial       vorticity maximum : ", round(maximum(grid_vor); digits = 9), "  (1/s)")
+    println("Initial      zonal wind maximum : ", round(maximum(grid_u); digits = 4), "  (m/s)")
+    println("Initial meridional wind maximum : ", round(maximum(grid_v); digits = 4), "  (m/s)")
+    println(repeat("###", 30))
     # Output initial field
     Update_Output_Init!(op_man, dyn_data, integrator.time)
     #################### <<< Field initialization <<< ####################
@@ -307,8 +299,10 @@ function Shallow_Water_Main()
     
     
     #################### >>> Parameter initialization >>> ####################
-    # Linear damping
-    # Following Suhas & Boos, the physical damping is not included
+    """
+    Linear damping
+    Following Suhas & Boos, the physical damping is not included
+    """
     
     # fric_damp_time  = 20.0 * day_to_sec
     # therm_damp_time = 10.0 * day_to_sec
